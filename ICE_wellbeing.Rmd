@@ -148,7 +148,7 @@ save_correlation_matrix = function(df, filename, ...) {
 
 ```{r, include=F}
 #Load the dataset
-load("./S3/02/output/dataset.RData")
+load("./02/output/dataset.RData")
 ```
 
 

@@ -8,7 +8,7 @@ Please cite the corresponding publication when using these materials:
 
 ## Contents
 
-This repository contains [raw](https://github.com/nencki-lobi/ICE-wellbeing/tree/main/01/input) and [cleaned](https://github.com/nencki-lobi/ICE-wellbeing/tree/main/02/output) data collected in the course of the study. Morover, we share data analysis code, as well final [HTML report]().
+This repository contains [raw](https://github.com/nencki-lobi/ICE-wellbeing/tree/main/01/input) and [cleaned](https://github.com/nencki-lobi/ICE-wellbeing/tree/main/02/output) data collected in the course of the study. Morover, we share data analysis code, as well final [HTML report](https://github.com/nencki-lobi/ICE-wellbeing/tree/main/ICE_wellbeing.html).
 
 ## How to use
 
