@@ -1,6 +1,6 @@
 # Inventory of Climate Emotions (ICE) and mental wellbeing
 
-This repository contains supplementary materials (data and code) associated with the manuscript inspecting emotional responses to climate change as predictors of mental wellbeing. The remaining supplementary materials can be found on the accompanying [OSF website](https://osf.io/xxxxx/).
+This repository contains supplementary materials (data and code) associated with the manuscript inspecting emotional responses to climate change as predictors of mental wellbeing. The remaining supplementary materials can be found on the accompanying [OSF website](https://osf.io/scqyf/).
 
 Please cite the corresponding publication when using these materials:
 
