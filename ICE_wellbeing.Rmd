@@ -1,0 +1,915 @@
+---
+title: "Climate emotions &  wellbeing - data analysis"
+author: "Michalina Marczak"
+date: "Last compiled on `r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 6
+    toc_float: false
+  
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include=FALSE}
+# For starters
+#Load the required libraries & custom functions.
+
+#set the global options
+options(max.print=999999)  #allows printing out large outputs
+options(scipen = 999)  #disables scientific notation (uses decimal instead)   
+set.seed(9999) # set seed for replicability
+
+####### load the packages needed for data analysis 
+library(tidyverse)
+library(psych)
+library(lm.beta)
+library(BetterReg)
+library(rgl)
+library(car)
+library(simpleboot)
+library(boot)
+
+# CUSTOM FUNCTIONS
+#the first two are from Paul van der Laken (https://paulvanderlaken.com/2020/07/28/publication-ready-correlation-matrix-significance-r/#correlation_matrix), and the last one is from Mehmet Mehmetoglu.
+
+#' correlation_matrix
+#' Creates a publication-ready / formatted correlation matrix, using `Hmisc::rcorr` in the backend.
+#'
+#' @param df dataframe; containing numeric and/or logical columns to calculate correlations for
+#' @param type character; specifies the type of correlations to compute; gets passed to `Hmisc::rcorr`; options are `"pearson"` or `"spearman"`; defaults to `"pearson"`
+#' @param digits integer/double; number of decimals to show in the correlation matrix; gets passed to `formatC`; defaults to `3`
+#' @param decimal.mark character; which decimal.mark to use; gets passed to `formatC`; defaults to `.`
+#' @param use character; which part of the correlation matrix to display; options are `"all"`, `"upper"`, `"lower"`; defaults to `"all"`
+#' @param show_significance boolean; whether to add `*` to represent the significance levels for the correlations; defaults to `TRUE`
+#' @param replace_diagonal boolean; whether to replace the correlations on the diagonal; defaults to `FALSE`
+#' @param replacement character; what to replace the diagonal and/or upper/lower triangles with; defaults to `""` (empty string)
+#'
+#' @return a correlation matrix
+#' @export
+#'
+#' @examples
+#' `correlation_matrix(iris)`
+#' `correlation_matrix(mtcars)`
+correlation_matrix <- function(df, 
+                               type = "pearson",
+                               digits = 3, 
+                               decimal.mark = ".",
+                               use = "all", 
+                               show_significance = TRUE, 
+                               replace_diagonal = FALSE, 
+                               replacement = ""){
+  
+  # check arguments
+  stopifnot({
+    is.numeric(digits)
+    digits >= 0
+    use %in% c("all", "upper", "lower")
+    is.logical(replace_diagonal)
+    is.logical(show_significance)
+    is.character(replacement)
+  })
+  # we need the Hmisc package for this
+  require(Hmisc)
+  
+  # retain only numeric and boolean columns
+  isNumericOrBoolean = vapply(df, function(x) is.numeric(x) | is.logical(x), logical(1))
+  if (sum(!isNumericOrBoolean) > 0) {
+    cat('Dropping non-numeric/-boolean column(s):', paste(names(isNumericOrBoolean)[!isNumericOrBoolean], collapse = ', '), '\n\n')
+  }
+  df = df[isNumericOrBoolean]
+  
+  # transform input data frame to matrix
+  x <- as.matrix(df)
+  
+  # run correlation analysis using Hmisc package
+  correlation_matrix <- Hmisc::rcorr(x, type = type)
+  R <- correlation_matrix$r # Matrix of correlation coeficients
+  p <- correlation_matrix$P # Matrix of p-value 
+  
+  # transform correlations to specific character format
+  Rformatted = formatC(R, format = 'f', digits = digits, decimal.mark = decimal.mark)
+  
+  # if there are any negative numbers, we want to put a space before the positives to align all
+  if (sum(!is.na(R) & R < 0) > 0) {
+    Rformatted = ifelse(!is.na(R) & R > 0, paste0(" ", Rformatted), Rformatted)
+  }
+
+  # add significance levels if desired
+  if (show_significance) {
+    # define notions for significance levels; spacing is important.
+    stars <- ifelse(is.na(p), "", ifelse(p < .001, "***", ifelse(p < .01, "**", ifelse(p < .05, "*", ""))))
+    Rformatted = paste0(Rformatted, stars)
+  }
+  
+  # make all character strings equally long
+  max_length = max(nchar(Rformatted))
+  Rformatted = vapply(Rformatted, function(x) {
+    current_length = nchar(x)
+    difference = max_length - current_length
+    return(paste0(x, paste(rep(" ", difference), collapse = ''), sep = ''))
+  }, FUN.VALUE = character(1))
+  
+  # build a new matrix that includes the formatted correlations and their significance stars
+  Rnew <- matrix(Rformatted, ncol = ncol(x))
+  rownames(Rnew) <- colnames(Rnew) <- colnames(x)
+  
+  # replace undesired values
+  if (use == 'upper') {
+    Rnew[lower.tri(Rnew, diag = replace_diagonal)] <- replacement
+  } else if (use == 'lower') {
+    Rnew[upper.tri(Rnew, diag = replace_diagonal)] <- replacement
+  } else if (replace_diagonal) {
+    diag(Rnew) <- replacement
+  }
+  
+  return(Rnew)
+}
+
+
+#' save_correlation_matrix
+#' Creates and save to file a fully formatted correlation matrix, using `correlation_matrix` and `Hmisc::rcorr` in the backend
+#' @param df dataframe; passed to `correlation_matrix`
+#' @param filename either a character string naming a file or a connection open for writing. "" indicates output to the console; passed to `write.csv`
+#' @param ... any other arguments passed to `correlation_matrix`
+#'
+#' @return NULL
+#'
+#' @examples
+#' `save_correlation_matrix(df = iris, filename = 'iris-correlation-matrix.csv')`
+#' `save_correlation_matrix(df = mtcars, filename = 'mtcars-correlation-matrix.csv', digits = 3, use = 'lower')`
+save_correlation_matrix = function(df, filename, ...) {
+  return(write.csv2(correlation_matrix(df, ...), file = filename))
+}
+```
+
+```{r, include=F}
+#Load the dataset
+load("./S3/02/output/dataset.RData")
+```
+
+
+```{r, include=F}
+# Climate emotions data
+#Subset the data frame with data on climate emotions.
+ICE_32 <- dplyr::select(qdata, starts_with("ICE-32"))
+```
+
+```{r, include=F}
+ICE_32 <- as.data.frame(ICE_32)
+
+#change the variables type from character to numeric (keeping them in the data frame format)
+ICE_32 <- as.data.frame(lapply(ICE_32, as.numeric))
+```
+
+## Inspecting the climate emotions data
+
+```{r, include=F}
+#Explore & inspect the ICE data.
+#is there any missing data?
+sum(colSums(is.na(ICE_32)))
+
+#a categorical representation of the ICE data to check for inconsistent values
+#lapply(ICE_32, table) # I won't print it here because it takes a lot of space
+```
+
+```{r, include=F}
+# For the descriptives, the response format should be 1-5 not 0-4, hence we add 1 to each value in the data frame
+ICE_32 <- ICE_32 + 1
+```
+
+```{r, include=F}
+# Overview of the descriptives 
+psych::describe(ICE_32)
+```
+
+```{r, include=F}
+#### Add columns with mean scores across climate emotions
+ICE_32 <- ICE_32 %>% 
+  mutate(climate.anger = rowSums(.[1:4]/4), 
+         climate.contempt = rowSums(.[5:8]/4), 
+         climate.enthusiasm = rowSums(.[9:12]/4), 
+         climate.powerlessness = rowSums(.[13:16]/4), 
+         climate.guilt = rowSums(.[17:20])/4,
+         climate.isolation = rowSums(.[21:24]/4),
+         climate.anxiety = rowSums(.[25:28])/4,
+         climate.sorrow = rowSums(.[29:32])/4)
+
+#Also: a df with scales only to make it easier for the analysis
+s_ICE_32 <- ICE_32[33:40]
+```
+
+```{r, include=F}
+#Save the output for the paper
+#S3_descriptives_for_printout <- psych::describe(s_ICE_32)
+#write.table(S3_descriptives_for_printout, file = "s3_desc_ICE.csv", sep = ";")
+```
+
+### Descriptives 
+```{r, include=T, echo = F}
+knitr::kable(psych::describe(s_ICE_32), "simple")
+```
+
+### Distributions
+
+```{r, include=T, echo = F}
+## formal test - shapiro-wilk
+lapply(s_ICE_32, shapiro.test)
+```
+
+
+```{r, include=F, echo = F}
+theme_set(
+  theme_minimal() +
+    theme(legend.position = "top")
+)
+
+s_ICE_32.gathered <- s_ICE_32 %>%
+  as_tibble() %>%
+  select_if(is.numeric) %>%
+  gather(key = "variable", value = "value")
+
+ggplot(s_ICE_32.gathered, aes(value)) +
+  geom_density(fill = "lightgrey") +
+  facet_wrap(~variable)
+```
+
+### Internal consistencies
+
+We inspect the internal consistencies of the ICE scales using Cronbach's alpha coefficient
+```{r, include=F}
+anger <- dplyr::select(ICE_32, c(1:4))
+contempt <- dplyr::select(ICE_32, c(5:8))
+enthusiasm <- dplyr::select(ICE_32, c(9:12))
+powerlessness <- dplyr::select(ICE_32, c(13:16))
+guilt <- dplyr::select(ICE_32, c(17:20))
+isolation <- dplyr::select(ICE_32, c(21:24))
+anxiety <- dplyr::select(ICE_32, c(25:28))
+sorrow <- dplyr::select(ICE_32, c(29:32))
+
+ICE_reliabilities_list <- list(anger, contempt, 
+                               enthusiasm, powerlessness, guilt,
+                               isolation, anxiety, sorrow)
+
+compute.alpha.each.scale <- lapply(ICE_reliabilities_list, psych::alpha, check.keys=TRUE)
+s_reliabilities <- sapply(compute.alpha.each.scale, "[[", 1)[1:2,]
+colnames(s_reliabilities) <- c("anger", "contempt", 
+                               "enthusiasm", "powerlessness", "guilt",
+                               "isolation", "anxiety", "sorrow")
+```
+
+```{r, include=T, echo = F}
+knitr::kable(s_reliabilities, "simple")
+```
+
+```{r, include=F, echo = F}
+#save the output to copy it to the paper easily
+#write.table(s_reliabilities, file = "ICE_rel.csv", sep = ";")
+```
+
+## Inspecting the Mental Health Continuum data
+
+```{r, include=F}
+#Create a data frame with the MHC data
+MHC <- dplyr::select(qdata, starts_with("MHC"))
+```
+
+```{r, include=F}
+MHC <- as.data.frame(MHC)
+
+#change the variables type from character to numeric (keeping them in the data frame format)
+MHC <- as.data.frame(lapply(MHC, as.numeric))
+```
+
+
+```{r, include=F}
+#Explore and inspect the MHC data 
+#is there any missing data?
+#sum(colSums(is.na(MHC)))
+
+#a categorical representation of the data to check for inconsistent values
+#lapply(MHC, table) 
+```
+
+```{r, include=F}
+# For the descriptives, the response format should be 1-6 not 0-5, hence I add 1 to each value in the data frame
+MHC <- MHC + 1
+```
+
+```{r, include=F}
+# Overview of the descriptives of the MHC data
+psych::describe(MHC)
+```
+
+```{r, include=F}
+# Add columns with the mean composite scores on emotional wellbeing, social wellbeing and psychological wellbeing
+MHC <- MHC %>% 
+  mutate(emo_wb = rowSums(.[1:3]/3), 
+         soc_wb = rowSums(.[4:8]/5), 
+         psy_wb = rowSums(.[9:14]/6))
+
+
+#Also: a dataframe with MHC composite scores only to make the analysis easier
+s_MHC <- MHC[15:17]
+```
+
+```{r, include=F}
+# Save in a table to make it easier to copy the values to the paper
+#MHC_descr_for_printout <- psych::describe(s_MHC)
+#write.table(MHC_descr_for_printout, file = "s3_descr_MHC.csv", sep = ";")
+```
+
+### Descriptives
+```{r, include=T, echo = F}
+# Overview of the descriptives of the MHC data
+knitr::kable(psych::describe(s_MHC), "simple")
+```
+
+### Distributions
+
+```{r, include=T, echo = F}
+lapply(s_MHC, shapiro.test)
+```
+
+```{r, include=F, echo = F}
+s_MHC.gathered <- s_MHC %>%
+  as_tibble() %>%
+  select_if(is.numeric) %>%
+  gather(key = "variable", value = "value")
+
+ggplot(s_MHC.gathered, aes(value)) +
+  geom_density(fill = "lightgrey") +
+  facet_wrap(~variable)
+```
+
+### Internal consistencies
+
+We inspect the internal consistencies of the MHC scales using Cronbach's alpha coefficient
+```{r, include=F}
+emo_wb <- dplyr::select(MHC, c(1:3))
+soc_wb <- dplyr::select(MHC, c(4:8))
+psy_wb <- dplyr::select(MHC, c(9:14))
+
+MHC_reliabilities_list <- list(emo_wb, soc_wb, psy_wb)
+
+compute.alpha.each.scale <- lapply(MHC_reliabilities_list, psych::alpha, check.keys=TRUE)
+s_reliabilities <- sapply(compute.alpha.each.scale, "[[", 1)[1:2,]
+colnames(s_reliabilities) <- c("emo_wb", "soc_wb", "psy_wb")
+```
+
+```{r, include=T, echo = F}
+knitr::kable(s_reliabilities, "simple")
+```
+
+```{r, include=F}
+# save in a table to make it easier to copy the values to the paper
+#write.table(s_reliabilities, file = "MHC_rel.csv", sep = ";")
+```
+
+## Demographics
+
+```{r, include=F}
+dems <- dplyr::select(qdata, starts_with("demo"))
+colnames(dems) <- c("cc_concern", "gender", "yearOfbirth", "country", "language1", "area", "education", "anyViews", "canViews", "perceived_SES",
+"language2", "political_views", "edu_other")
+
+age <- 2022 - as.numeric(dems$yearOfbirth)
+dems <- cbind(dems, age)
+dems<- as.data.frame(lapply(dems, as.numeric))
+dems$cc_concern <- dems$cc_concern + 1
+
+demographics <- dplyr::select(dems, "cc_concern", "age", "gender")
+
+dems_descr_for_printout <- psych::describe(demographics)
+#write.table(dems_descr_for_printout, file = "s3_descr_dems.csv", sep = ";")
+```
+
+### Descriptives
+
+```{r, include=T, echo = F}
+knitr::kable(dems_descr_for_printout, "simple")
+```
+
+### Distributions
+
+```{r, include=T, echo = F}
+shapiro.test(demographics$cc_concern)
+shapiro.test(demographics$age)
+```
+
+## Climate emotions & mental health   
+
+```{r, include=F}
+#Create one df with the relevant variables for this step of the analysis
+cor_df2 <- cbind(s_ICE_32, s_MHC, demographics)
+```
+
+### Correlation table
+Let's use the Spearman correlation coefficient because the data is ordinal and non-parametrically distributed
+
+```{r, include=T, message = FALSE, echo=F}
+#For the correlations, I use the custom correlation_matrix and save_correlation_matrix functions from Paul van der Laken, the code can be found here and it is included in the beginning of this script: https://paulvanderlaken.com/2020/07/28/publication-ready-correlation-matrix-significance-r/#correlation_matrix
+
+knitr::kable(correlation_matrix(cor_df2, type = "spearman", digits = 2, use = 'lower', replace_diagonal = T), "simple")
+```
+```{r, include=F}
+#save it in a format that can be readily copied to the paper
+#save_correlation_matrix(cor_df2, filename = "health_cor.csv", type = "spearman", digits = 2, use = 'lower', replace_diagonal = T)
+```
+
+### Climate emotions as predictors of mental wellbeing {.tabset}
+
+#### Emotional wellbeing {.tabset}
+
+**The multiple linear regression model with climate enthusiasm, climate anxiety, age, and climate concern as predictors**
+
+```{r, include=T, echo = F}
+df_wb <- dplyr::select(cor_df2, climate.anger:emo_wb, age, cc_concern)
+model <- lm(emo_wb ~ climate.enthusiasm + climate.anxiety + age + cc_concern, data = df_wb)
+
+summary(model)
+```
+
+**Standardised regressions coefficients**
+```{r, include=T, echo = F}
+beta <- lm.beta::lm.beta(model)
+beta
+```
+
+**Squared Semi-partial correlation coefficients**
+```{r, include=T, echo = F, warnings= F}
+# (tells us how much of the unique contribution of an independent variable to the total variation in dependent variable. In other words, it explains increment in R-square when an independent variable is added)
+BetterReg::parts(model, pred=4)
+```
+
+**95% bootstrapped and accelerated confidence intervals of the regression coefficients**
+
+```{r, include=F, echo = F, warnings= F}
+# Set the number of bootstrap iterations
+nboot <- 1000
+
+# R is the number of bootstrap iterations
+# Setting rows to FALSE indicates resampling of residuals
+mysimpleboot <- lm.boot(model, R = nboot, rows = FALSE)
+# Extract bootstrap coefficients
+myresults <- sapply(mysimpleboot$boot.list, function(x) x$coef)
+# Transpose matrix so that lines are bootstrap iterations
+# and columns are coefficients
+tmyresults <- t(myresults)
+
+# Plot histograms of bootstrapped coefficients
+ncoefs <- length(data.frame(tmyresults))
+
+par(mfrow = c(1, 2), mai = c(0.5, 0.5, 0.5, 0.5), ask = TRUE)
+
+for (i in 1:ncoefs) {
+  lab <- colnames(tmyresults)[i]
+  x <- tmyresults[, i]
+  plot(density(x), main = lab, xlab = "")
+  abline(v = model$coef[i], col = "red")
+  abline(v = quantile(x, c(0.025, 0.975)))
+  hist(x, main = lab, xlab = "")
+  abline(v = quantile(x, c(0.025, 0.975)))
+  abline(v = model$coef[i], col = "red")
+}
+
+#On these plots, the red line indicate the value of the parameter in the ordinary analysis, and the two vertical black lines mark the limits of the 95% confidence interval. 
+
+# Does the CI include 0? If not, one can conclude that the effect of xn on y is significantly positive/negative.
+
+# Let's compute the so-called bias-corrected accelerated (BCa) confidence limits
+```
+
+```{r, include=T, echo = F, warnings= F}
+################################################
+# Bootstrap analysis in multiple regression with BCa confidence intervals
+# Preferable when parameter distribution is far from normal
+# Bootstrap 95% BCa CI for regression coefficients
+
+
+# function to obtain regression coefficients for each iteration
+bs <- function(formula, data, indices) {
+  d <- data[indices, ] # allows boot to select sample
+  fit <- lm(formula, data = d)
+  return(coef(fit))
+}
+# bootstrapping with 1000 replications
+results <- boot(
+  data = df_wb, statistic = bs, R = 1000,
+  formula = emo_wb ~ climate.enthusiasm + climate.anxiety + age + cc_concern
+)
+```
+
+For the intercept
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 1) # intercept
+boot.ci(results, type = "bca", index = 1) # intercept
+```
+
+For climate enthusiasm
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 2) # c. enthusiasm
+boot.ci(results, type = "bca", index = 2) # c. enthusiasm
+```
+
+For climate anxiety
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 3) # c. anxiety
+boot.ci(results, type = "bca", index = 3) # c. anxiety
+```
+
+For age
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 4) # age
+boot.ci(results, type = "bca", index = 4) # age
+```
+
+For climate concern
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 5) # c. concern
+boot.ci(results, type = "bca", index = 5) # c. concern
+```
+
+
+
+**Assumptions check**
+
+##### 1. Distribution of the model residuals
+
+Let's have a look at the plots of model residuals:
+
+```{r, include=T, echo = F}
+hist(model$residuals)
+plot(model)
+```
+
+
+##### 2. Linear relationship between independent and dependent variables
+
+```{r, include=T, echo = F, fig.width=14, fig.height=12}
+pairs(~emo_wb+climate.enthusiasm + climate.anxiety + age + cc_concern,data=df_wb,
+   main="Simple Scatterplot Matrix")
+```
+
+
+##### 3. No multicollinearity
+We know from the correlation matrix that correlations of the independent variables do not exceed the customary cutoff point of .8 so we can say that this assumption is met. But let's also have a look at the Variance Inflation Factor:
+
+```{r, include=T, echo = F, warning = F}
+car::vif(model)
+```
+
+The value for VIF starts at 1 and has no upper limit. A general rule of thumb for interpreting VIFs is as follows:
+
+- A value of 1 indicates there is no correlation between a given predictor variable and any other predictor variables in the model.
+- A value between 1 and 5 indicates moderate correlation between a given predictor variable and other predictor variables in the model, but this is often not severe enough to require attention.
+- A value greater than 5 indicates potentially severe correlation between a given predictor variable and other predictor variables in the model. In this case, the coefficient estimates and p-values in the regression output are likely unreliable.
+
+
+##### 4. Homoscedasticity
+
+Let's check the plot of the predicted values against the standardized residual values from point 1 to confirm that the points are equally distributed across all the values of the independent variables.
+
+
+#### Social wellbeing {.tabset}
+
+The multiple linear regression model with climate anger, climate contempt, climate enthusiasm, climate guilt, climate isolation, climate anxiety, climate sorrow , age, and climate concern as predictors
+
+```{r, include=T, echo = F}
+df_wb <- dplyr::select(cor_df2, climate.anger:soc_wb, age, cc_concern, -emo_wb)
+
+model <- lm(soc_wb ~ climate.anger + climate.contempt 
+            + climate.enthusiasm + climate.guilt + climate.isolation + climate.anxiety + climate.sorrow + age + cc_concern, data = df_wb)
+
+summary(model)
+```
+
+
+Standardised regressions coefficients
+```{r, include=T, echo = F}
+beta <- lm.beta::lm.beta(model)
+beta
+```
+
+Squared Semi-partial correlation coefficients 
+```{r, include=T, echo = F, warnings= F}
+# (tells us how much of the unique contribution of an independent variable to the total variation in dependent variable. In other words, it explains increment in R-square when an independent variable is added)
+BetterReg::parts(model, pred=9)
+```
+
+
+Plotting the relationship between social wellbeing, enthusiasm and anxiety
+```{r, include=T, echo = F}
+library(psych)
+df_wb_hist <- dplyr::select(df_wb, climate.enthusiasm, climate.anxiety, soc_wb)
+
+pairs.panels(df_wb_hist,
+             smooth = F,      # If TRUE, draws loess smooths
+             scale = FALSE,      # If TRUE, scales the correlation text font
+             density = TRUE,     # If TRUE, adds density plots and histograms
+             ellipses = F,    # If TRUE, draws ellipses
+             method = "spearman", # Correlation method (also "spearman" or "kendall")
+             pch = 21,           # pch symbol
+             lm = T,         # If TRUE, plots linear fit rather than the LOESS (smoothed) fit
+             cor = TRUE,         # If TRUE, reports correlations
+             jiggle = FALSE,     # If TRUE, data points are jittered
+             factor = 2,         # Jittering factor
+             #hist.col = 4,       # Histograms color
+             stars = TRUE,       # If TRUE, adds significance level with stars
+             ci = TRUE)          # If TRUE, adds confidence intervals
+
+library(rgl)
+plot3d(df_wb$soc_wb, df_wb$climate.enthusiasm, df_wb$climate.anxiety, type = "s", size = 0.75, col = )
+```
+
+
+
+**95% bootstrapped and accelerated confidence intervals of the regression coefficients**
+
+```{r, include=T, echo = F, warnings= F}
+################################################
+# Bootstrap analysis in multiple regression with BCa confidence intervals
+# Preferable when parameter distribution is far from normal
+# Bootstrap 95% BCa CI for regression coefficients
+
+
+# function to obtain regression coefficients for each iteration
+bs <- function(formula, data, indices) {
+  d <- data[indices, ] # allows boot to select sample
+  fit <- lm(formula, data = d)
+  return(coef(fit))
+}
+# bootstrapping with 1000 replications
+results <- boot(
+  data = df_wb, statistic = bs, R = 1000,
+  formula = soc_wb ~ climate.anger + climate.contempt 
+            + climate.enthusiasm + climate.guilt + climate.isolation + climate.anxiety + climate.sorrow + age + cc_concern
+)
+```
+
+For the intercept
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 1) # intercept
+boot.ci(results, type = "bca", index = 1) # intercept
+```
+
+For climate anger
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 2) # intercept
+boot.ci(results, type = "bca", index = 2) # intercept
+```
+
+For climate contempt
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 3) # intercept
+boot.ci(results, type = "bca", index = 3) # intercept
+```
+
+For climate enthusiasm
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 4) # intercept
+boot.ci(results, type = "bca", index = 4) # intercept
+```
+
+For climate guilt
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 5) # intercept
+boot.ci(results, type = "bca", index = 5) # intercept
+```
+
+For climate isolation
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 6) # intercept
+boot.ci(results, type = "bca", index = 6) # intercept
+```
+
+For climate anxiety
+
+```{r, include=T, echo= F, warnings= F}
+plot(results, index = 7) # intercept
+boot.ci(results, type = "bca", index = 7) # intercept
+```
+
+For climate sorrow
+
+```{r, include=T, echo= F, warnings= F}
+plot(results, index = 8) # intercept
+boot.ci(results, type = "bca", index = 8) # intercept
+```
+
+For age
+
+```{r, include=T, echo= F, warnings= F}
+plot(results, index = 9) # intercept
+boot.ci(results, type = "bca", index = 9) # intercept
+```
+
+For climate concern
+
+```{r, include=T, echo= F, warnings= F}
+plot(results, index = 10) # intercept
+boot.ci(results, type = "bca", index = 10) # intercept
+```
+
+**Assumptions check**
+
+##### 1. Distribution of the model residuals
+
+Let's have a look at the plots of model residuals:
+
+```{r, include=T, echo = F}
+hist(model$residuals)
+plot(model)
+```
+
+
+##### 2. Linear relationship between independent and dependent variables
+
+```{r, include=T, echo = F, fig.width=20, fig.height=18}
+pairs(~soc_wb + climate.anger + climate.contempt 
+            + climate.enthusiasm + climate.guilt + climate.isolation + climate.anxiety + climate.sorrow + age + cc_concern, data = df_wb,
+   main="Simple Scatterplot Matrix")
+```
+
+
+##### 3. No multicollinearity
+We know from the correlation matrix that correlations of the independent variables do not exceed the customary cutoff point of .8 so we can say that this assumption is met. But let's also have a look at the Variance Inflation Factor:
+
+```{r, include=T, echo = F, warning = F}
+car::vif(model)
+```
+
+The value for VIF starts at 1 and has no upper limit. A general rule of thumb for interpreting VIFs is as follows:
+
+- A value of 1 indicates there is no correlation between a given predictor variable and any other predictor variables in the model.
+- A value between 1 and 5 indicates moderate correlation between a given predictor variable and other predictor variables in the model, but this is often not severe enough to require attention.
+- A value greater than 5 indicates potentially severe correlation between a given predictor variable and other predictor variables in the model. In this case, the coefficient estimates and p-values in the regression output are likely unreliable.
+
+
+##### 4. Homoscedasticity
+
+Let's check the plot of the predicted values against the standardized residual values from point 1 to confirm that the points are equally distributed across all the values of the independent variables.
+
+
+#### Psychological wellbeing {.tabset}
+
+The multiple linear regression model with climate anger, climate contempt, climate enthusiasm, climate anxiety, climate sorrow, age, and climate concern as predictors
+
+```{r, include=T, echo = F}
+df_wb <- dplyr::select(cor_df2, climate.anger:psy_wb, age, cc_concern, -emo_wb, -soc_wb)
+model <- lm(psy_wb ~ climate.anger + climate.contempt 
+            + climate.enthusiasm + climate.anxiety + climate.sorrow + age + cc_concern, data = df_wb)
+
+summary(model)
+```
+
+Standardised regressions coefficients
+```{r, include=T, echo = F}
+beta <- lm.beta::lm.beta(model)
+beta
+```
+
+Squared Semi-partial correlation coefficients 
+```{r, include=T, echo = F, warnings= F}
+# (tells us how much of the unique contribution of an independent variable to the total variation in dependent variable. In other words, it explains increment in R-square when an independent variable is added)
+BetterReg::parts(model, pred=7)
+```
+
+**95% bootstrapped and accelerated confidence intervals of the regression coefficients**
+
+```{r, include=T, echo = F, warnings= F}
+################################################
+# Bootstrap analysis in multiple regression with BCa confidence intervals
+# Preferable when parameter distribution is far from normal
+# Bootstrap 95% BCa CI for regression coefficients
+
+
+# function to obtain regression coefficients for each iteration
+bs <- function(formula, data, indices) {
+  d <- data[indices, ] # allows boot to select sample
+  fit <- lm(formula, data = d)
+  return(coef(fit))
+}
+# bootstrapping with 1000 replications
+results <- boot(
+  data = df_wb, statistic = bs, R = 1000,
+  formula = psy_wb ~ climate.anger + climate.contempt 
+            + climate.enthusiasm + climate.anxiety + climate.sorrow + age + cc_concern
+)
+```
+
+For the intercept
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 1) # intercept
+boot.ci(results, type = "bca", index = 1) # intercept
+```
+
+For climate anger
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 2) # intercept
+boot.ci(results, type = "bca", index = 2) # intercept
+```
+
+For climate contempt
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 3) # intercept
+boot.ci(results, type = "bca", index = 3) # intercept
+```
+
+For climate enthusiasm
+
+```{r, include=T, echo = F, warnings= F}
+plot(results, index = 4) # intercept
+boot.ci(results, type = "bca", index = 4) # intercept
+```
+
+For climate anxiety
+
+```{r, include=T, echo= F, warnings= F}
+plot(results, index = 5) # intercept
+boot.ci(results, type = "bca", index = 5) # intercept
+```
+
+For climate sorrow
+
+```{r, include=T, echo= F, warnings= F}
+plot(results, index = 6) # intercept
+boot.ci(results, type = "bca", index = 6) # intercept
+```
+
+For age
+
+```{r, include=T, echo= F, warnings= F}
+plot(results, index = 7) # intercept
+boot.ci(results, type = "bca", index = 7) # intercept
+```
+
+For climate concern
+
+```{r, include=T, echo= F, warnings= F}
+plot(results, index = 8) # intercept
+boot.ci(results, type = "bca", index = 8) # intercept
+```
+
+
+
+**Assumptions check**
+
+##### 1. Distribution of the model residuals
+
+Let's have a look at the plots of model residuals:
+
+```{r, include=T, echo = F}
+hist(model$residuals)
+plot(model)
+```
+
+
+##### 2. Linear relationship between independent and dependent variables
+
+```{r, include=T, echo = F, fig.width=14, fig.height=12}
+pairs(~psy_wb + climate.anger + climate.contempt 
+            + climate.enthusiasm + climate.anxiety + climate.sorrow + age + cc_concern, data = df_wb,
+   main="Simple Scatterplot Matrix")
+```
+
+##### 3. No multicollinearity
+We know from the correlation matrix that correlations of the independent variables do not exceed the customary cutoff point of .8 so we can say that this assumption is met. But let's also have a look at the Variance Inflation Factor:
+
+```{r, include=T, echo = F, warning = F}
+car::vif(model)
+```
+
+The value for VIF starts at 1 and has no upper limit. A general rule of thumb for interpreting VIFs is as follows:
+
+- A value of 1 indicates there is no correlation between a given predictor variable and any other predictor variables in the model.
+- A value between 1 and 5 indicates moderate correlation between a given predictor variable and other predictor variables in the model, but this is often not severe enough to require attention.
+- A value greater than 5 indicates potentially severe correlation between a given predictor variable and other predictor variables in the model. In this case, the coefficient estimates and p-values in the regression output are likely unreliable.
+
+
+##### 4. Homoscedasticity
+
+Let's check the plot of the predicted values against the standardized residual values from point 1 to confirm that the points are equally distributed across all the values of the independent variables.
+
+
+
+## Note
+
+This HTML output presents the general logic of the analysis along with some results not outlined in the main body of the manuscript. Please note that the full R code for the data cleaning and data analysis is available in the supplementary materials on the accompanying [OSF website](link).
