@@ -1,6 +1,6 @@
 ---
 title: "Climate emotions &  wellbeing - data analysis"
-author: "Michalina Marczak"
+
 date: "Last compiled on `r format(Sys.time(), '%d %B, %Y')`"
 output: 
   html_document:
@@ -32,6 +32,8 @@ library(rgl)
 library(car)
 library(simpleboot)
 library(boot)
+library(knitr)
+library(kableExtra)
 
 # CUSTOM FUNCTIONS
 #the first two are from Paul van der Laken (https://paulvanderlaken.com/2020/07/28/publication-ready-correlation-matrix-significance-r/#correlation_matrix), and the last one is from Mehmet Mehmetoglu.
@@ -381,10 +383,14 @@ dems <- cbind(dems, age)
 dems<- as.data.frame(lapply(dems, as.numeric))
 dems$cc_concern <- dems$cc_concern + 1
 
+
 demographics <- dplyr::select(dems, "cc_concern", "age", "gender")
 
 dems_descr_for_printout <- psych::describe(demographics)
 #write.table(dems_descr_for_printout, file = "s3_descr_dems.csv", sep = ";")
+
+demographics_rev <- dplyr::select(dems, "cc_concern", "age", "gender", "education", "perceived_SES")
+
 ```
 
 ### Descriptives
@@ -404,11 +410,11 @@ shapiro.test(demographics$age)
 
 ```{r, include=F}
 #Create one df with the relevant variables for this step of the analysis
-cor_df2 <- cbind(s_ICE_32, s_MHC, demographics)
+cor_df2 <- cbind(s_ICE_32, s_MHC, demographics_rev)
 ```
 
 ### Correlation table
-Let's use the Spearman correlation coefficient because the data is ordinal and non-parametrically distributed
+Let's use the Spearman correlation coefficient because many variables are on the Likert-scale and some deviate from normal distribution
 
 ```{r, include=T, message = FALSE, echo=F}
 #For the correlations, I use the custom correlation_matrix and save_correlation_matrix functions from Paul van der Laken, the code can be found here and it is included in the beginning of this script: https://paulvanderlaken.com/2020/07/28/publication-ready-correlation-matrix-significance-r/#correlation_matrix
@@ -419,6 +425,86 @@ knitr::kable(correlation_matrix(cor_df2, type = "spearman", digits = 2, use = 'l
 #save it in a format that can be readily copied to the paper
 #save_correlation_matrix(cor_df2, filename = "health_cor.csv", type = "spearman", digits = 2, use = 'lower', replace_diagonal = T)
 ```
+
+#### FDR adjusted p-values {.tabset}
+
+Benjamini-Hochberg False Discovery Rate Adjustment - this method controls the expected proportion of false discoveries among the rejected hypotheses. It is less conservative than e.g., the Bonferroni correction and often more appropriate in exploratory studies. The common threshold for FDR is .05.
+
+##### FDR-adjusted correlation matrix
+
+```{r, include=T, message = FALSE, echo=F}
+
+cor_results <- psych::corr.test(cor_df2, method = "spearman", adjust = "fdr")
+
+cor_coefficients <- cor_results$r
+
+p_values_adjusted_are_above_diagonal <- cor_results$p
+
+
+# Create a matrix to store results (correlation coefficients and asterisks)
+cor_table_matrix <- matrix(NA, nrow = ncol(cor_coefficients), ncol = ncol(cor_coefficients))
+
+# Populate the matrix with correlation coefficients and asterisks
+for (i in 1:nrow(cor_coefficients)) {
+  for (j in 1:ncol(cor_coefficients)) {
+    cor_val <- cor_coefficients[i, j]
+    p_val <- p_values_adjusted_are_above_diagonal[i, j]
+    
+    if (!is.na(p_val)) {
+      if (p_val < 0.001) {
+        cor_table_matrix[i, j] <- sprintf("%.2f***", cor_val)
+      } else if (p_val < 0.01) {
+        cor_table_matrix[i, j] <- sprintf("%.2f**", cor_val)
+      } else if (p_val < 0.05) {
+        cor_table_matrix[i, j] <- sprintf("%.2f*", cor_val)
+      } else {
+        cor_table_matrix[i, j] <- sprintf("%.2f", cor_val)
+      }
+    } else {
+      cor_table_matrix[i, j] <- NA
+    }
+  }
+}
+
+# Add row and column names from cor_results
+rownames(cor_table_matrix) <- colnames(cor_results$r)
+colnames(cor_table_matrix) <- rownames(cor_results$r)
+
+# Retain values above the diagonal
+cor_table_matrix[lower.tri(cor_table_matrix, diag = TRUE)] <- ""
+
+# Transpose the matrix
+transposed_cor_table_matrix <- t(cor_table_matrix)
+
+
+# Print the transposed correlation matrix with asterisks and original variable names
+#print(transposed_cor_table_matrix)
+
+#in a pretty way:
+kable(transposed_cor_table_matrix, format = "html", align = "c", col.names = colnames(transposed_cor_table_matrix)) %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+##### Exact p-values
+
+Entries above the diagonal (marked with "d") are FDR-adjusted for multiple tests, below the diagonal are the raw p-values.
+
+```{r, include=T, message = FALSE, echo=F}
+p_values <- round(cor_results$p, 3)
+
+# Mark the diagonal with "d"
+diag_marked_p_values <- p_values
+diag_marked_p_values[!lower.tri(p_values) & !upper.tri(p_values)] <- "d"
+
+# Print the matrix with the marked diagonal
+#print(diag_marked_p_values
+
+#in a pretty form:
+kable(diag_marked_p_values, format = "html", align = "c", col.names = colnames(diag_marked_p_values)) %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+
 
 ### Climate emotions as predictors of mental wellbeing {.tabset}
 

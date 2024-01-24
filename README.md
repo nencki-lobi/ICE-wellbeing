@@ -20,7 +20,7 @@ rmarkdown::render("ICE_wellbeing.Rmd", output_file = "ICE_wellbeing.html")
 
 ## Requirements
 
-The following R packages are required: `BetterReg`, `boot`, `car`, `lm.beta`, `openxlsx`, `psych`, `rgl`, `simpleboot`, `tidyverse`.
+The following R packages are required: `BetterReg`, `boot`, `car`, `kableExtra`, `knitr`, `lm.beta`, `openxlsx`, `psych`, `rgl`, `simpleboot`, `tidyverse`.
 
 Optional, but useful for working with PostgreSQL databases: `RPostgreSQL`.
 
